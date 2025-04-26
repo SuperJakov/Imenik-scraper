@@ -1,6 +1,13 @@
 import puppeteer, { Browser, Page } from "puppeteer";
 import fs from "fs";
 
+// Parse command line arguments
+function parseArgs(): { minify: boolean } {
+  return {
+    minify: process.argv.includes("-minify"),
+  };
+}
+
 interface Entry {
   telephoneNumber: string;
   street: string;
@@ -350,6 +357,7 @@ const browser = await puppeteer.launch({
 console.log("Browser launched");
 
 async function main() {
+  const args = parseArgs();
   const names = JSON.parse(fs.readFileSync("names.json", "utf-8")) as string[];
   console.time("Scraping time");
   console.log("Scraping", names.length, "names in batches of 10...");
@@ -357,8 +365,16 @@ async function main() {
   const entries = await scrapeByNames(names);
   console.timeEnd("Scraping time");
   console.log("All names processed, writing results to disk");
-  fs.writeFileSync("imenik-results.json", JSON.stringify(entries, null, 2));
-  console.log(`Done! ${entries.length} entries saved.`);
+
+  // Use the minify flag to determine JSON formatting
+  const indentation = args.minify ? undefined : 2;
+  fs.writeFileSync(
+    "imenik-results.json",
+    JSON.stringify(entries, null, indentation)
+  );
+  console.log(
+    `Done! ${entries.length} entries saved.${args.minify ? " (minified)" : ""}`
+  );
   console.log("Browser closed, exiting.");
 }
 
