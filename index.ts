@@ -67,13 +67,6 @@ function splitIntoBatches<T>(array: T[], batchSize: number): T[][] {
   return batches;
 }
 
-console.log("Launching browser...");
-const browser = await puppeteer.launch({
-  headless: true,
-  timeout: 0,
-});
-console.log("Browser launched");
-
 function parseFullName(fullName: string): string {
   // Capitalize the first letter of each word in the name
   const words = fullName.split(" ");
@@ -349,126 +342,46 @@ async function scrapeByNames(names: string[]): Promise<Entry[]> {
   return allEntries;
 }
 
-// Combine all names and remove duplicates
-const names = [
-  ...new Set([
-    // Existing names
-    "Ivan",
-    "Marko",
-    "Ana",
-    "Josip",
-    "Maja",
-    "Tomislav",
-    "Petra",
-    "Nikola",
-    "Ivana",
-    "Mario",
+console.log("Launching browser...");
+const browser = await puppeteer.launch({
+  headless: true,
+  timeout: 0,
+});
+console.log("Browser launched");
 
-    // New names to add
-    "Luka",
-    "Jakov",
-    "David",
-    "Toma",
-    "Fran",
-    "Roko",
-    "Matej",
-    "Mateo",
-    "Petar",
-    "Lovro",
-    "Mihael",
-    "Niko",
-    "Leon",
-    "Šimun",
-    "Noa",
-    "Jan",
-    "Borna",
-    "Filip",
-    "Vito",
-    "Leo",
-    "Karlo",
-    "Teo",
-    "Ivano",
-    "Ante",
-    "Gabriel",
-    "Tin",
-    "Bruno",
-    "Lukas",
-    "Viktor",
-    "Liam",
-    "Toni",
-    "Dominik",
-    "Oliver",
-    "Maro",
-    "Marin",
-    "Rafael",
-    "Adrian",
-    "Emanuel",
-    "Mauro",
-    "Andrej",
-    "Erik",
-    "Lovre",
-    "Patrik",
-    "Stjepan",
-    "Juraj",
-    "Adam",
-    "Bepo",
-    "Mia",
-    "Mila",
-    "Marta",
-    "Nika",
-    "Ema",
-    "Lucija",
-    "Rita",
-    "Eva",
-    "Sara",
-    "Elena",
-    "Klara",
-    "Marija",
-    "Lara",
-    "Sofia",
-    "Ena",
-    "Lana",
-    "Hana",
-    "Laura",
-    "Lea",
-    "Iva",
-    "Tena",
-    "Franka",
-    "Una",
-    "Dora",
-    "Emili",
-    "Tara",
-    "Lena",
-    "Leona",
-    "Magdalena",
-    "Tea",
-    "Vita",
-    "Tia",
-    "Iris",
-    "Maša",
-    "Luce",
-    "Sofija",
-    "Aurora",
-    "Lota",
-    "Nikol",
-    "Katja",
-    "Nora",
-    "Bruna",
-    "Mara",
-    "Roza",
-    "Lora",
-    "Cvita",
-    "Dunja",
-    "Kiara",
-  ]),
-];
-console.time("Scraping time");
-console.log("Scraping", names.length, "names in batches of 10...");
-console.log("This may take a while, please be patient.");
-const entries = await scrapeByNames(names);
-console.timeEnd("Scraping time");
-console.log("All names processed, writing results to disk");
-fs.writeFileSync("imenik-results.json", JSON.stringify(entries, null, 2));
-console.log(`Done! ${entries.length} entries saved.`);
-await browser.close();
-console.log("Browser closed, exiting.");
+async function main() {
+  const names = JSON.parse(fs.readFileSync("names.json", "utf-8")) as string[];
+  console.time("Scraping time");
+  console.log("Scraping", names.length, "names in batches of 10...");
+  console.log("This may take a while, please be patient.");
+  const entries = await scrapeByNames(names);
+  console.timeEnd("Scraping time");
+  console.log("All names processed, writing results to disk");
+  fs.writeFileSync("imenik-results.json", JSON.stringify(entries, null, 2));
+  console.log(`Done! ${entries.length} entries saved.`);
+  console.log("Browser closed, exiting.");
+}
+
+try {
+  await main();
+} catch (error) {
+  console.error("An error occurred:", error);
+} finally {
+  await exit();
+}
+async function exit() {
+  console.log("Finishing up...");
+  console.log("Closing browser...");
+  if (browser && browser.connected) {
+    await browser.close();
+  }
+}
+
+process.on("SIGINT", async () => {
+  console.log("SIGINT received, closing browser and exiting...");
+  await exit();
+});
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, closing browser and exiting...");
+  await exit();
+});
