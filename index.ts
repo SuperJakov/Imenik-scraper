@@ -13,6 +13,7 @@ interface NameStatus {
   [name: string]: {
     currentPage: number;
     totalPages: number;
+    status: "pending" | "processing" | "completed";
   };
 }
 const nameStatus: NameStatus = {};
@@ -20,12 +21,50 @@ const nameStatus: NameStatus = {};
 // Function to clear console and display current status
 function refreshStatusDisplay() {
   console.clear();
+
+  // Group names by status for better display
+  const pending: string[] = [];
+  const processing: string[] = [];
+  const completed: string[] = [];
+
   Object.keys(nameStatus).forEach((name) => {
     const status = nameStatus[name];
-    if (status) {
-      console.log(`${name}: ${status.currentPage}/${status.totalPages}`);
+    if (!status) return;
+
+    if (status.status === "pending") {
+      pending.push(`${name}: 0/${status.totalPages}`);
+    } else if (status.status === "processing") {
+      processing.push(`${name}: ${status.currentPage}/${status.totalPages}`);
+    } else if (status.status === "completed") {
+      completed.push(`${name}: ${status.totalPages}/${status.totalPages}`);
     }
   });
+
+  console.log("=== CURRENT BATCH ===");
+  if (processing.length > 0) {
+    console.log(processing.join("\n"));
+  } else {
+    console.log("No names currently processing");
+  }
+
+  console.log("\n=== QUEUE ===");
+  if (pending.length > 0) {
+    console.log(pending.join("\n"));
+  } else {
+    console.log("Queue empty");
+  }
+
+  console.log("\n=== COMPLETED ===");
+  console.log(`${completed.length} names completed`);
+}
+
+// Utility function to split array into batches
+function splitIntoBatches<T>(array: T[], batchSize: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < array.length; i += batchSize) {
+    batches.push(array.slice(i, i + batchSize));
+  }
+  return batches;
 }
 
 console.log("Launching browser...");
@@ -192,103 +231,239 @@ async function scrapePage(page: Page): Promise<Entry[]> {
 }
 
 async function scrapeByName(name: string): Promise<Entry[]> {
-  // Initialize status tracking for this name
-  nameStatus[name] = { currentPage: 1, totalPages: 10 };
+  // Make sure the name entry exists before trying to update it
+  if (!nameStatus[name]) {
+    nameStatus[name] = { currentPage: 0, totalPages: 10, status: "pending" };
+  }
+
+  // Now we can safely update the properties
+  nameStatus[name].status = "processing";
+  nameStatus[name].currentPage = 1;
   refreshStatusDisplay();
 
   const page = await newPage(browser);
-  await page.goto("https://imenik.tportal.hr/", {
-    waitUntil: "domcontentloaded",
-  });
-  await page.waitForSelector("#tko", { timeout: 0 });
+  try {
+    await page.goto("https://imenik.tportal.hr/", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForSelector("#tko", { timeout: 0 });
 
-  const nameInput = await page.$("#tko");
-  if (!nameInput) {
-    throw new Error(`Name input not found on the page`);
-  }
-  await nameInput.focus();
-  await nameInput.type(name, { delay: 100 });
-  await page.keyboard.press("Enter");
+    const nameInput = await page.$("#tko");
+    if (!nameInput) {
+      throw new Error(`Name input not found on the page`);
+    }
+    await nameInput.focus();
+    await nameInput.type(name, { delay: 100 });
+    await page.keyboard.press("Enter");
 
-  await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 0 });
+    await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 0 });
 
-  const allEntries: Entry[] = [];
-  const firstEntries = await scrapePage(page);
-  allEntries.push(...firstEntries);
+    const allEntries: Entry[] = [];
+    const firstEntries = await scrapePage(page);
+    allEntries.push(...firstEntries);
 
-  // Extract pagination links for direct navigation
-  const paginationLinks = await page.$$eval(
-    'a[href^="show?action=pretraga&type=brzaPretraga&showResultsPage="]',
-    (links) =>
-      Array.from(
-        new Set(links.map((link) => link.getAttribute("href")))
-      ).filter(Boolean) as string[]
-  );
+    // Extract pagination links for direct navigation
+    const paginationLinks = await page.$$eval(
+      'a[href^="show?action=pretraga&type=brzaPretraga&showResultsPage="]',
+      (links) =>
+        Array.from(
+          new Set(links.map((link) => link.getAttribute("href")))
+        ).filter(Boolean) as string[]
+    );
 
-  // Update total pages if we have pagination information
-  if (paginationLinks.length > 0) {
-    nameStatus[name].totalPages = paginationLinks.length + 1;
+    // Update total pages if we have pagination information
+    if (paginationLinks.length > 0) {
+      nameStatus[name].totalPages = paginationLinks.length + 1;
+      refreshStatusDisplay();
+    }
+
+    // Get base URL for constructing absolute URLs
+    const baseUrl = new URL(page.url()).origin;
+
+    // Navigate directly to each pagination page instead of clicking links
+    for (let i = 0; i < paginationLinks.length; i++) {
+      const linkPath = paginationLinks[i];
+      const fullUrl = `${baseUrl}/${linkPath}`;
+
+      // Update pagination status
+      nameStatus[name].currentPage = i + 2; // +1 for 0-indexing, +1 because we already processed first page
+      refreshStatusDisplay();
+
+      await page.goto(fullUrl, { waitUntil: "networkidle2", timeout: 0 });
+      const pageEntries = await scrapePage(page);
+      allEntries.push(...pageEntries);
+    }
+
+    // After scraping is done, mark as completed
+    nameStatus[name].status = "completed";
     refreshStatusDisplay();
+    return allEntries;
+  } finally {
+    // Close the page to free up resources
+    await page.close();
   }
-
-  // Get base URL for constructing absolute URLs
-  const baseUrl = new URL(page.url()).origin;
-
-  // Navigate directly to each pagination page instead of clicking links
-  for (let i = 0; i < paginationLinks.length; i++) {
-    const linkPath = paginationLinks[i];
-    const fullUrl = `${baseUrl}/${linkPath}`;
-
-    // Update pagination status
-    nameStatus[name].currentPage = i + 2; // +1 for 0-indexing, +1 because we already processed first page
-    refreshStatusDisplay();
-
-    await page.goto(fullUrl, { waitUntil: "networkidle2", timeout: 0 });
-    const pageEntries = await scrapePage(page);
-    allEntries.push(...pageEntries);
-  }
-
-  await page.close();
-  return allEntries;
 }
 
 async function scrapeByNames(names: string[]): Promise<Entry[]> {
-  // Initialize status tracking for all names
+  // Initialize status tracking for all names as pending
   names.forEach((name) => {
-    nameStatus[name] = { currentPage: 0, totalPages: 10 };
+    nameStatus[name] = { currentPage: 0, totalPages: 10, status: "pending" };
   });
   refreshStatusDisplay();
 
-  // Kick off a scrape for each name in parallel
-  const allResults = await Promise.all(
-    names.map(async (name) => {
-      try {
-        return await scrapeByName(name);
-      } catch (err) {
-        console.error(`Failed to scrape "${name}":`, err);
-        return []; // on error, return empty list so it won't break Promise.all
-      }
-    })
+  const BATCH_SIZE = 10;
+  const nameBatches = splitIntoBatches(names, BATCH_SIZE);
+  let allEntries: Entry[] = [];
+
+  console.log(
+    `Processing ${names.length} names in ${nameBatches.length} batches of up to ${BATCH_SIZE}`
   );
 
-  // Flatten the array of arrays into a single array of Entry
-  return allResults.flat();
+  for (let batchIndex = 0; batchIndex < nameBatches.length; batchIndex++) {
+    const batch = nameBatches[batchIndex];
+    if (!batch) continue; // Skip if batch is undefined
+
+    console.log(`\nStarting batch ${batchIndex + 1}/${nameBatches.length}`);
+
+    // Process each batch in parallel
+    const batchResults = await Promise.all(
+      batch.map(async (name) => {
+        try {
+          return await scrapeByName(name);
+        } catch (err) {
+          console.error(`Failed to scrape "${name}":`, err);
+          if (nameStatus[name]) {
+            // Check if nameStatus[name] exists
+            nameStatus[name].status = "completed"; // Mark as completed even if failed
+          }
+          refreshStatusDisplay();
+          return []; // on error, return empty list so it won't break Promise.all
+        }
+      })
+    );
+
+    allEntries = [...allEntries, ...batchResults.flat()];
+    console.log(`Completed batch ${batchIndex + 1}/${nameBatches.length}`);
+  }
+
+  return allEntries;
 }
 
+// Combine all names and remove duplicates
 const names = [
-  "Ivan",
-  "Marko",
-  "Ana",
-  "Josip",
-  "Maja",
-  "Tomislav",
-  "Petra",
-  "Nikola",
-  "Ivana",
-  "Mario",
+  ...new Set([
+    // Existing names
+    "Ivan",
+    "Marko",
+    "Ana",
+    "Josip",
+    "Maja",
+    "Tomislav",
+    "Petra",
+    "Nikola",
+    "Ivana",
+    "Mario",
+
+    // New names to add
+    "Luka",
+    "Jakov",
+    "David",
+    "Toma",
+    "Fran",
+    "Roko",
+    "Matej",
+    "Mateo",
+    "Petar",
+    "Lovro",
+    "Mihael",
+    "Niko",
+    "Leon",
+    "Šimun",
+    "Noa",
+    "Jan",
+    "Borna",
+    "Filip",
+    "Vito",
+    "Leo",
+    "Karlo",
+    "Teo",
+    "Ivano",
+    "Ante",
+    "Gabriel",
+    "Tin",
+    "Bruno",
+    "Lukas",
+    "Viktor",
+    "Liam",
+    "Toni",
+    "Dominik",
+    "Oliver",
+    "Maro",
+    "Marin",
+    "Rafael",
+    "Adrian",
+    "Emanuel",
+    "Mauro",
+    "Andrej",
+    "Erik",
+    "Lovre",
+    "Patrik",
+    "Stjepan",
+    "Juraj",
+    "Adam",
+    "Bepo",
+    "Mia",
+    "Mila",
+    "Marta",
+    "Nika",
+    "Ema",
+    "Lucija",
+    "Rita",
+    "Eva",
+    "Sara",
+    "Elena",
+    "Klara",
+    "Marija",
+    "Lara",
+    "Sofia",
+    "Ena",
+    "Lana",
+    "Hana",
+    "Laura",
+    "Lea",
+    "Iva",
+    "Tena",
+    "Franka",
+    "Una",
+    "Dora",
+    "Emili",
+    "Tara",
+    "Lena",
+    "Leona",
+    "Magdalena",
+    "Tea",
+    "Vita",
+    "Tia",
+    "Iris",
+    "Maša",
+    "Luce",
+    "Sofija",
+    "Aurora",
+    "Lota",
+    "Nikol",
+    "Katja",
+    "Nora",
+    "Bruna",
+    "Mara",
+    "Roza",
+    "Lora",
+    "Cvita",
+    "Dunja",
+    "Kiara",
+  ]),
 ];
 console.time("Scraping time");
-console.log("Scraping", names.length, "names...");
+console.log("Scraping", names.length, "names in batches of 10...");
 console.log("This may take a while, please be patient.");
 const entries = await scrapeByNames(names);
 console.timeEnd("Scraping time");
