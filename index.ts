@@ -1,446 +1,72 @@
-import puppeteer, { Browser, Page } from "puppeteer";
+import { Browser } from "puppeteer";
 import fs from "fs";
-(async () => {
-  // Parse command line arguments
-  function parseArgs(): { minify: boolean } {
-    return {
-      minify: process.argv.includes("-minify"),
-    };
-  }
+import { CONFIG } from "./config";
+import { NameStatus } from "./types";
+import { parseArgs } from "./utils";
+import { initializeBrowser, cleanup } from "./browser";
+import { scrapeByNames } from "./scraper";
 
-  interface Entry {
-    telephoneNumber: string;
-    street: string;
-    city: string;
-    fullName: string;
-  }
+// State variables
+export const nameStatus: NameStatus = {};
+export let browser: Browser;
 
-  // Status tracking for names being processed
-  interface NameStatus {
-    [name: string]: {
-      currentPage: number;
-      totalPages: number;
-      status: "pending" | "processing" | "completed";
-    };
-  }
-  const nameStatus: NameStatus = {};
+// Main execution function
+async function main() {
+  try {
+    // Initialize browser
+    browser = await initializeBrowser();
 
-  // Function to clear console and display current status
-  function refreshStatusDisplay() {
-    console.clear();
-
-    // Group names by status for better display
-    const pending: string[] = [];
-    const processing: string[] = [];
-    const completed: string[] = [];
-
-    Object.keys(nameStatus).forEach((name) => {
-      const status = nameStatus[name];
-      if (!status) return;
-
-      if (status.status === "pending") {
-        pending.push(`${name}: 0/${status.totalPages}`);
-      } else if (status.status === "processing") {
-        processing.push(`${name}: ${status.currentPage}/${status.totalPages}`);
-      } else if (status.status === "completed") {
-        completed.push(`${name}: ${status.totalPages}/${status.totalPages}`);
-      }
-    });
-
-    console.log("=== CURRENT BATCH ===");
-    if (processing.length > 0) {
-      console.log(processing.join("\n"));
-    } else {
-      console.log("No names currently processing");
-    }
-
-    console.log("\n=== QUEUE ===");
-    if (pending.length > 0) {
-      if (pending.length > 2) {
-        console.log(pending.slice(0, 2).join("\n"));
-        console.log(`\n... and ${pending.length - 2} more`);
-      } else {
-        console.log(pending.join("\n"));
-      }
-    } else {
-      console.log("Queue empty");
-    }
-
-    console.log("\n=== COMPLETED ===");
-    console.log(`${completed.length} names completed`);
-  }
-
-  // Utility function to split array into batches
-  function splitIntoBatches<T>(array: T[], batchSize: number): T[][] {
-    const batches: T[][] = [];
-    for (let i = 0; i < array.length; i += batchSize) {
-      batches.push(array.slice(i, i + batchSize));
-    }
-    return batches;
-  }
-
-  function parseFullName(fullName: string): string {
-    // Capitalize the first letter of each word in the name
-    const words = fullName.split(" ");
-    const capitalizedWords = words.map((word) => {
-      if (word.length === 0) return "";
-      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-    });
-    return capitalizedWords.join(" ");
-  }
-
-  // Function to parse city names same as full names
-  function parseCity(city: string): string {
-    // Apply the same capitalization rules as parseFullName
-    return parseFullName(city);
-  }
-
-  // Function to parse street names according to Croatian language rules
-  function parseStreet(street: string): string {
-    if (!street) return "";
-
-    // Split the street name into words
-    const words = street.split(" ");
-
-    // Special handling for Croatian street names
-    return words
-      .map((word, index) => {
-        // Skip empty words
-        if (word.length === 0) return "";
-
-        // Common Croatian prepositions, conjunctions that should be lowercase when not first
-        const lowerCaseWords = [
-          "i",
-          "u",
-          "na",
-          "kod",
-          "do",
-          "od",
-          "za",
-          "iz",
-          "s",
-          "sa",
-          "k",
-          "ka",
-        ];
-
-        // Common directional indicators
-        const directionalWords = [
-          "sjever",
-          "jug",
-          "istok",
-          "zapad",
-          "sjeverni",
-          "južni",
-          "istočni",
-          "zapadni",
-        ];
-
-        // Always capitalize first word or words after hyphen
-        if (index === 0 || (index > 0 && words[index - 1]?.endsWith("-"))) {
-          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        }
-
-        // Keep prepositions and conjunctions lowercase when not at beginning
-        if (lowerCaseWords.includes(word.toLowerCase())) {
-          return word.toLowerCase();
-        }
-
-        // Keep directional indicators lowercase when not at beginning (unless they're part of a proper name)
-        if (directionalWords.includes(word.toLowerCase())) {
-          return word.toLowerCase();
-        }
-
-        // Capitalize other words (most likely proper nouns)
-        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-      })
-      .join(" ");
-  }
-
-  // Function to clean phone number by removing spaces
-  function cleanPhoneNumber(number: string): string {
-    return number.replace(/\s+/g, "");
-  }
-
-  const blockedResourceTypes = new Set([
-    "image",
-    "media",
-    "font",
-    "stylesheet",
-  ]);
-
-  const blockedDomains = [
-    "doubleclick.net",
-    "googlesyndication.com",
-    "adservice.google.com",
-    "adservice.google.*",
-    "google-analytics.com",
-    "analytics.google.com",
-    "facebook.com",
-    "facebook.net",
-    "ads-twitter.com",
-    "adroll.com",
-    "taboola.com",
-    "outbrain.com",
-    "criteo.com",
-    "scorecardresearch.com",
-    "zedo.com",
-    "quantserve.com",
-    "moatads.com",
-    "bing.com",
-  ];
-
-  async function newPage(browser: Browser): Promise<Page> {
-    const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(0);
-    page.setDefaultTimeout(0);
-
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/113.0.0.0 Safari/537.36",
-    );
-
-    await page.setViewport({ width: 1920, height: 1080 });
-    await page.setRequestInterception(true);
-
-    page.on("request", (request) => {
-      const url = request.url().toLowerCase();
-
-      if (
-        blockedResourceTypes.has(request.resourceType()) ||
-        blockedDomains.some((domain) => url.includes(domain))
-      ) {
-        request.abort();
-      } else {
-        request.continue();
-      }
-    });
-
-    return page;
-  }
-
-  async function scrapePage(page: Page): Promise<Entry[]> {
-    const rawEntries: Entry[] = await page.$$eval(
-      "div.ImenikContainerInnerDetails.searchResultLevel3",
-      (containers) =>
-        containers.map((container) => {
-          // 1) Street and city
-          const addressLi = container.querySelector<HTMLLIElement>(
-            "ul.itemContactInfo li.secondColumn",
-          );
-          let street = "";
-          let city = "";
-          if (addressLi) {
-            const divs = Array.from(
-              addressLi.querySelectorAll<HTMLDivElement>("div"),
-            );
-            street = divs[0]?.textContent?.trim() || "";
-            const cityLine = divs[1]?.textContent?.trim() || "";
-            const parts = cityLine.split(" ");
-            city = parts.slice(1).join(" ");
-          }
-
-          const telElem = container.querySelector<HTMLDivElement>(
-            ".imenikSearchResultsRight .imenikTelefon",
-          );
-          const telephoneNumber = telElem?.textContent?.trim() || "";
-
-          const fullNameElem =
-            container.querySelector<HTMLDivElement>(".resultsTitle");
-          const fullName = fullNameElem?.textContent?.trim() || "";
-
-          return { telephoneNumber, street, city, fullName };
-        }),
-    );
-
-    // apply parsing functions to all fields and filter for numbers starting with "09"
-    return rawEntries
-      .map((entry) => ({
-        ...entry,
-        fullName: parseFullName(entry.fullName),
-        city: parseCity(entry.city),
-        street: parseStreet(entry.street),
-      }))
-      .filter((entry) => {
-        const cleanedNumber = cleanPhoneNumber(entry.telephoneNumber);
-        return cleanedNumber.startsWith("09");
-      });
-  }
-
-  async function scrapeByName(name: string): Promise<Entry[]> {
-    // Make sure the name entry exists before trying to update it
-    if (!nameStatus[name]) {
-      nameStatus[name] = { currentPage: 0, totalPages: 10, status: "pending" };
-    }
-
-    // Now we can safely update the properties
-    nameStatus[name].status = "processing";
-    nameStatus[name].currentPage = 1;
-    refreshStatusDisplay();
-
-    const page = await newPage(browser);
-    try {
-      await page.goto("https://imenik.tportal.hr/", {
-        waitUntil: "domcontentloaded",
-      });
-      await page.waitForSelector("#tko", { timeout: 0 });
-
-      const nameInput = await page.$("#tko");
-      if (!nameInput) {
-        throw new Error(`Name input not found on the page`);
-      }
-      await nameInput.focus();
-      await nameInput.type(name, { delay: 100 });
-      await page.keyboard.press("Enter");
-
-      await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 0 });
-
-      const allEntries: Entry[] = [];
-      const firstEntries = await scrapePage(page);
-      allEntries.push(...firstEntries);
-
-      // Extract pagination links for direct navigation
-      const paginationLinks = await page.$$eval(
-        'a[href^="show?action=pretraga&type=brzaPretraga&showResultsPage="]',
-        (links) =>
-          Array.from(
-            new Set(links.map((link) => link.getAttribute("href"))),
-          ).filter(Boolean) as string[],
-      );
-
-      // Update total pages if we have pagination information
-      if (paginationLinks.length > 0) {
-        nameStatus[name].totalPages = paginationLinks.length + 1;
-        refreshStatusDisplay();
-      }
-
-      // Get base URL for constructing absolute URLs
-      const baseUrl = new URL(page.url()).origin;
-
-      // Navigate directly to each pagination page instead of clicking links
-      for (let i = 0; i < paginationLinks.length; i++) {
-        const linkPath = paginationLinks[i];
-        const fullUrl = `${baseUrl}/${linkPath}`;
-
-        // Update pagination status
-        nameStatus[name].currentPage = i + 2; // +1 for 0-indexing, +1 because we already processed first page
-        refreshStatusDisplay();
-
-        await page.goto(fullUrl, { waitUntil: "networkidle2", timeout: 0 });
-        const pageEntries = await scrapePage(page);
-        allEntries.push(...pageEntries);
-      }
-
-      // After scraping is done, mark as completed
-      nameStatus[name].status = "completed";
-      refreshStatusDisplay();
-      return allEntries;
-    } finally {
-      // Close the page to free up resources
-      await page.close();
-    }
-  }
-
-  async function scrapeByNames(names: string[]): Promise<Entry[]> {
-    // Initialize status tracking for all names as pending
-    names.forEach((name) => {
-      nameStatus[name] = { currentPage: 0, totalPages: 10, status: "pending" };
-    });
-    refreshStatusDisplay();
-
-    const BATCH_SIZE = 10;
-    const nameBatches = splitIntoBatches(names, BATCH_SIZE);
-    let allEntries: Entry[] = [];
-
-    console.log(
-      `Processing ${names.length} names in ${nameBatches.length} batches of up to ${BATCH_SIZE}`,
-    );
-
-    for (let batchIndex = 0; batchIndex < nameBatches.length; batchIndex++) {
-      const batch = nameBatches[batchIndex];
-      if (!batch) continue; // Skip if batch is undefined
-
-      console.log(`\nStarting batch ${batchIndex + 1}/${nameBatches.length}`);
-
-      // Process each batch in parallel
-      const batchResults = await Promise.all(
-        batch.map(async (name) => {
-          try {
-            return await scrapeByName(name);
-          } catch (err) {
-            console.error(`Failed to scrape "${name}":`, err);
-            if (nameStatus[name]) {
-              // Check if nameStatus[name] exists
-              nameStatus[name].status = "completed"; // Mark as completed even if failed
-            }
-            refreshStatusDisplay();
-            return []; // on error, return empty list so it won't break Promise.all
-          }
-        }),
-      );
-
-      allEntries = [...allEntries, ...batchResults.flat()];
-      console.log(`Completed batch ${batchIndex + 1}/${nameBatches.length}`);
-    }
-
-    return allEntries;
-  }
-
-  console.log("Launching browser...");
-  const browser = await puppeteer.launch({
-    headless: true,
-    timeout: 0,
-  });
-  console.log("Browser launched");
-
-  async function main() {
+    // Parse args and read input file
     const args = parseArgs();
     const names = JSON.parse(
-      fs.readFileSync("names.json", "utf-8"),
+      fs.readFileSync(args.nameListFile, "utf-8")
     ) as string[];
+
+    // Scrape data
     console.time("Scraping time");
-    console.log("Scraping", names.length, "names in batches of 10...");
+    console.log(
+      "Scraping",
+      names.length,
+      `names in batches of ${CONFIG.BATCH_SIZE}...`
+    );
     console.log("This may take a while, please be patient.");
+
     const entries = await scrapeByNames(names);
     console.timeEnd("Scraping time");
-    console.log("All names processed, writing results to disk");
 
-    // Use the minify flag to determine JSON formatting
+    // Save results
+    console.log("All names processed, writing results to disk");
     const indentation = args.minify ? undefined : 2;
     fs.writeFileSync(
       "imenik-results.json",
-      JSON.stringify(entries, null, indentation),
+      JSON.stringify(entries, null, indentation)
     );
+
     console.log(
       `Done! ${entries.length} entries saved.${
         args.minify ? " (minified)" : ""
-      }`,
+      }`
     );
-    console.log("Browser closed, exiting.");
-  }
-
-  try {
-    await main();
   } catch (error) {
     console.error("An error occurred:", error);
   } finally {
-    await exit();
+    await cleanup();
   }
-  async function exit() {
-    console.log("Finishing up...");
-    console.log("Closing browser...");
-    if (browser && browser.connected) {
-      await browser.close();
-    }
-  }
+}
 
-  process.on("SIGINT", async () => {
-    console.log("SIGINT received, closing browser and exiting...");
-    await exit();
-  });
-  process.on("SIGTERM", async () => {
-    console.log("SIGTERM received, closing browser and exiting...");
-    await exit();
-  });
-})();
+// Register cleanup handlers
+process.on("SIGINT", async () => {
+  console.log("SIGINT received, closing browser and exiting...");
+  await cleanup();
+});
+
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, closing browser and exiting...");
+  await cleanup();
+});
+
+// Start the program
+main().catch((error) => {
+  console.error("Main execution failed:", error);
+  process.exit(1);
+});

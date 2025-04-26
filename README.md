@@ -35,11 +35,20 @@ To start the scraper:
 bun run index.ts
 ```
 
-You can also pass the `--minify` flag to reduce the size of the scraping output:
+You can also pass the following arguments:
 
-```bash
-bun run index.ts --minify
-```
+- `--minify` - Reduce the size of the scraping output:
+
+  ```bash
+  bun run index.ts --minify
+  ```
+
+- `--name-list=<filepath>` - Specify a custom JSON file containing names to search:
+  ```bash
+  bun run index.ts --name-list=morenames.json # We provide morenames.json
+  ```
+
+By default, the scraper will look for names in `names.json` if no custom file is specified.
 
 ## Building for Production
 
@@ -60,6 +69,7 @@ bun run build:run
 - `names.json` contains an array of names
 - This project uses **Puppeteer** under the hood for headless browser automation.
 - Scraped data will be stored in `imenik-results.json`.
+- [imenik.tportal.hr](https://imenik.tportal.hr/) doesn't have ratelimits
 
 ## License
 

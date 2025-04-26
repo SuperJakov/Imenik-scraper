@@ -1,0 +1,114 @@
+import { Args } from "./types";
+import { CONFIG } from "./config";
+import { nameStatus } from "./index";
+
+// Utility functions
+export function parseArgs(): Args {
+  const nameListArg = process.argv.find((arg) =>
+    arg.startsWith("--name-list=")
+  );
+  const nameListFile = nameListArg ? nameListArg.split("=")[1] : "names.json"; // Default to names.json if not specified
+
+  return {
+    minify: process.argv.includes("-minify"),
+    nameListFile,
+  };
+}
+
+export function splitIntoBatches<T>(array: T[], batchSize: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < array.length; i += batchSize) {
+    batches.push(array.slice(i, i + batchSize));
+  }
+  return batches;
+}
+
+export function refreshStatusDisplay() {
+  console.clear();
+
+  const pending: string[] = [];
+  const processing: string[] = [];
+  const completed: string[] = [];
+
+  Object.entries(nameStatus).forEach(([name, status]) => {
+    if (status.status === "pending") {
+      pending.push(`${name}: 0/${status.totalPages}`);
+    } else if (status.status === "processing") {
+      processing.push(`${name}: ${status.currentPage}/${status.totalPages}`);
+    } else if (status.status === "completed") {
+      completed.push(`${name}: ${status.totalPages}/${status.totalPages}`);
+    }
+  });
+
+  console.log("=== CURRENT BATCH ===");
+  console.log(
+    processing.length > 0
+      ? processing.join("\n")
+      : "No names currently processing"
+  );
+
+  console.log("\n=== QUEUE ===");
+  if (pending.length > 0) {
+    if (pending.length > 2) {
+      console.log(pending.slice(0, 2).join("\n"));
+      console.log(`\n... and ${pending.length - 2} more`);
+    } else {
+      console.log(pending.join("\n"));
+    }
+  } else {
+    console.log("Queue empty");
+  }
+
+  console.log("\n=== COMPLETED ===");
+  console.log(`${completed.length} names completed`);
+}
+
+// String parsing helpers
+export function parseFullName(fullName: string): string {
+  return fullName
+    .split(" ")
+    .map((word) =>
+      word.length === 0
+        ? ""
+        : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    )
+    .join(" ");
+}
+
+export function parseCity(city: string): string {
+  return parseFullName(city);
+}
+
+export function parseStreet(street: string): string {
+  if (!street) return "";
+
+  const words = street.split(" ");
+
+  return words
+    .map((word, index) => {
+      if (word.length === 0) return "";
+
+      // Always capitalize first word or words after hyphen
+      if (index === 0 || (index > 0 && words[index - 1]?.endsWith("-"))) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+
+      // Keep prepositions and conjunctions lowercase when not at beginning
+      if (CONFIG.CROATIAN_LOWERCASE_WORDS.includes(word.toLowerCase())) {
+        return word.toLowerCase();
+      }
+
+      // Keep directional indicators lowercase when not at beginning
+      if (CONFIG.DIRECTIONAL_WORDS.includes(word.toLowerCase())) {
+        return word.toLowerCase();
+      }
+
+      // Capitalize other words (most likely proper nouns)
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+export function cleanPhoneNumber(number: string): string {
+  return number.replace(/\s+/g, "");
+}
