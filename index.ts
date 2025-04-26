@@ -56,7 +56,12 @@ function refreshStatusDisplay() {
 
   console.log("\n=== QUEUE ===");
   if (pending.length > 0) {
-    console.log(pending.join("\n"));
+    if (pending.length > 2) {
+      console.log(pending.slice(0, 2).join("\n"));
+      console.log(`\n... and ${pending.length - 2} more`);
+    } else {
+      console.log(pending.join("\n"));
+    }
   } else {
     console.log("Queue empty");
   }
@@ -157,10 +162,34 @@ function cleanPhoneNumber(number: string): string {
   return number.replace(/\s+/g, "");
 }
 
-async function newPage(browser: Browser) {
+const blockedResourceTypes = new Set(["image", "media", "font", "stylesheet"]);
+
+const blockedDomains = [
+  "doubleclick.net",
+  "googlesyndication.com",
+  "adservice.google.com",
+  "adservice.google.*",
+  "google-analytics.com",
+  "analytics.google.com",
+  "facebook.com",
+  "facebook.net",
+  "ads-twitter.com",
+  "adroll.com",
+  "taboola.com",
+  "outbrain.com",
+  "criteo.com",
+  "scorecardresearch.com",
+  "zedo.com",
+  "quantserve.com",
+  "moatads.com",
+  "bing.com",
+];
+
+export async function newPage(browser: Browser): Promise<Page> {
   const page = await browser.newPage();
   page.setDefaultNavigationTimeout(0);
   page.setDefaultTimeout(0);
+
   await page.setUserAgent(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
       "AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -169,16 +198,20 @@ async function newPage(browser: Browser) {
 
   await page.setViewport({ width: 1920, height: 1080 });
   await page.setRequestInterception(true);
+
   page.on("request", (request) => {
+    const url = request.url().toLowerCase();
+
     if (
-      request.resourceType() === "image" ||
-      request.resourceType() === "font"
+      blockedResourceTypes.has(request.resourceType()) ||
+      blockedDomains.some((domain) => url.includes(domain))
     ) {
       request.abort();
     } else {
       request.continue();
     }
   });
+
   return page;
 }
 
