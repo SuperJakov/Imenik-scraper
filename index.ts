@@ -8,6 +8,26 @@ interface Entry {
   fullName: string;
 }
 
+// Status tracking for names being processed
+interface NameStatus {
+  [name: string]: {
+    currentPage: number;
+    totalPages: number;
+  };
+}
+const nameStatus: NameStatus = {};
+
+// Function to clear console and display current status
+function refreshStatusDisplay() {
+  console.clear();
+  Object.keys(nameStatus).forEach((name) => {
+    const status = nameStatus[name];
+    if (status) {
+      console.log(`${name}: ${status.currentPage}/${status.totalPages}`);
+    }
+  });
+}
+
 console.log("Launching browser...");
 const browser = await puppeteer.launch({
   headless: true,
@@ -23,6 +43,79 @@ function parseFullName(fullName: string): string {
     return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
   });
   return capitalizedWords.join(" ");
+}
+
+// Function to parse city names same as full names
+function parseCity(city: string): string {
+  // Apply the same capitalization rules as parseFullName
+  return parseFullName(city);
+}
+
+// Function to parse street names according to Croatian language rules
+function parseStreet(street: string): string {
+  if (!street) return "";
+
+  // Split the street name into words
+  const words = street.split(" ");
+
+  // Special handling for Croatian street names
+  return words
+    .map((word, index) => {
+      // Skip empty words
+      if (word.length === 0) return "";
+
+      // Common Croatian prepositions, conjunctions that should be lowercase when not first
+      const lowerCaseWords = [
+        "i",
+        "u",
+        "na",
+        "kod",
+        "do",
+        "od",
+        "za",
+        "iz",
+        "s",
+        "sa",
+        "k",
+        "ka",
+      ];
+
+      // Common directional indicators
+      const directionalWords = [
+        "sjever",
+        "jug",
+        "istok",
+        "zapad",
+        "sjeverni",
+        "južni",
+        "istočni",
+        "zapadni",
+      ];
+
+      // Always capitalize first word or words after hyphen
+      if (index === 0 || (index > 0 && words[index - 1]?.endsWith("-"))) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+
+      // Keep prepositions and conjunctions lowercase when not at beginning
+      if (lowerCaseWords.includes(word.toLowerCase())) {
+        return word.toLowerCase();
+      }
+
+      // Keep directional indicators lowercase when not at beginning (unless they're part of a proper name)
+      if (directionalWords.includes(word.toLowerCase())) {
+        return word.toLowerCase();
+      }
+
+      // Capitalize other words (most likely proper nouns)
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+// Function to clean phone number by removing spaces
+function cleanPhoneNumber(number: string): string {
+  return number.replace(/\s+/g, "");
 }
 
 async function newPage(browser: Browser) {
@@ -84,22 +177,31 @@ async function scrapePage(page: Page): Promise<Entry[]> {
       })
   );
 
-  // apply parseFullName in Node context
-  return rawEntries.map((entry) => ({
-    ...entry,
-    fullName: parseFullName(entry.fullName),
-  }));
+  // apply parsing functions to all fields and filter for numbers starting with "09"
+  return rawEntries
+    .map((entry) => ({
+      ...entry,
+      fullName: parseFullName(entry.fullName),
+      city: parseCity(entry.city),
+      street: parseStreet(entry.street),
+    }))
+    .filter((entry) => {
+      const cleanedNumber = cleanPhoneNumber(entry.telephoneNumber);
+      return cleanedNumber.startsWith("09");
+    });
 }
 
 async function scrapeByName(name: string): Promise<Entry[]> {
-  console.log(`=== Starting scrape for "${name}" ===`);
+  // Initialize status tracking for this name
+  nameStatus[name] = { currentPage: 1, totalPages: 10 };
+  refreshStatusDisplay();
+
   const page = await newPage(browser);
-  console.log(`Navigating to search page for "${name}"`);
   await page.goto("https://imenik.tportal.hr/", {
     waitUntil: "domcontentloaded",
   });
   await page.waitForSelector("#tko", { timeout: 0 });
-  console.log(`Search page loaded for "${name}"`);
+
   const nameInput = await page.$("#tko");
   if (!nameInput) {
     throw new Error(`Name input not found on the page`);
@@ -110,38 +212,53 @@ async function scrapeByName(name: string): Promise<Entry[]> {
 
   await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 0 });
 
-  console.log(`Search submitted for "${name}"`);
   const allEntries: Entry[] = [];
-  console.log(`Scraping first results page for "${name}"`);
   const firstEntries = await scrapePage(page);
-  console.log(`Found ${firstEntries.length} entries on first page`);
   allEntries.push(...firstEntries);
 
+  // Extract pagination links for direct navigation
   const paginationLinks = await page.$$eval(
     'a[href^="show?action=pretraga&type=brzaPretraga&showResultsPage="]',
     (links) =>
       Array.from(
         new Set(links.map((link) => link.getAttribute("href")))
-      ).filter(Boolean)
+      ).filter(Boolean) as string[]
   );
-  for (const link of paginationLinks) {
-    const paginationElem = await page.$(`a[href="${link}"]`);
-    if (paginationElem) {
-      console.log(`Clicking pagination link: ${link}`);
-      await paginationElem.click();
-      await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 0 });
-      const pageEntries = await scrapePage(page);
-      console.log(`Found ${pageEntries.length} entries on ${link}`);
-      allEntries.push(...pageEntries);
-    }
+
+  // Update total pages if we have pagination information
+  if (paginationLinks.length > 0) {
+    nameStatus[name].totalPages = paginationLinks.length + 1;
+    refreshStatusDisplay();
   }
+
+  // Get base URL for constructing absolute URLs
+  const baseUrl = new URL(page.url()).origin;
+
+  // Navigate directly to each pagination page instead of clicking links
+  for (let i = 0; i < paginationLinks.length; i++) {
+    const linkPath = paginationLinks[i];
+    const fullUrl = `${baseUrl}/${linkPath}`;
+
+    // Update pagination status
+    nameStatus[name].currentPage = i + 2; // +1 for 0-indexing, +1 because we already processed first page
+    refreshStatusDisplay();
+
+    await page.goto(fullUrl, { waitUntil: "networkidle2", timeout: 0 });
+    const pageEntries = await scrapePage(page);
+    allEntries.push(...pageEntries);
+  }
+
   await page.close();
-  console.log(
-    `Finished pages for "${name}", total so far: ${allEntries.length}`
-  );
   return allEntries;
 }
+
 async function scrapeByNames(names: string[]): Promise<Entry[]> {
+  // Initialize status tracking for all names
+  names.forEach((name) => {
+    nameStatus[name] = { currentPage: 0, totalPages: 10 };
+  });
+  refreshStatusDisplay();
+
   // Kick off a scrape for each name in parallel
   const allResults = await Promise.all(
     names.map(async (name) => {
@@ -149,7 +266,7 @@ async function scrapeByNames(names: string[]): Promise<Entry[]> {
         return await scrapeByName(name);
       } catch (err) {
         console.error(`Failed to scrape "${name}":`, err);
-        return []; // on error, return empty list so it won’t break Promise.all
+        return []; // on error, return empty list so it won't break Promise.all
       }
     })
   );
