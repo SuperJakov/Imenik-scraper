@@ -1,6 +1,7 @@
-import { Args } from "./types";
+import { Args, Cache, Entry } from "./types";
 import { CONFIG } from "./config";
 import { nameStatus } from "./index";
+import fs from "fs";
 
 // Utility functions
 export function parseArgs(): Args {
@@ -10,9 +11,39 @@ export function parseArgs(): Args {
   const nameListFile = nameListArg ? nameListArg.split("=")[1] : "names.json"; // Default to names.json if not specified
 
   return {
-    minify: process.argv.includes("-minify"),
+    minify: process.argv.includes("--minify"),
     nameListFile,
+    disableCache: process.argv.includes("--disable-cache"),
   };
+}
+
+// Cache utility functions
+export function loadCache(): Cache {
+  try {
+    if (fs.existsSync("cache.json")) {
+      const cacheData = fs.readFileSync("cache.json", "utf-8");
+      return JSON.parse(cacheData);
+    }
+  } catch (error) {
+    console.warn("Error reading cache file:", error);
+  }
+  return {};
+}
+
+export function saveCache(cache: Cache, minify: boolean = false): void {
+  try {
+    const indentation = minify ? undefined : 2;
+    fs.writeFileSync("cache.json", JSON.stringify(cache, null, indentation));
+  } catch (error) {
+    console.error("Error writing cache file:", error);
+  }
+}
+
+export function getEntriesFromCache(
+  name: string,
+  cache: Cache
+): Entry[] | null {
+  return cache[name] || null;
 }
 
 export function splitIntoBatches<T>(array: T[], batchSize: number): T[][] {

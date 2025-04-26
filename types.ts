@@ -16,4 +16,9 @@ export interface NameStatus {
 export interface Args {
   minify: boolean;
   nameListFile: string;
+  disableCache: boolean;
+}
+
+export interface Cache {
+  [name: string]: Entry[];
 }

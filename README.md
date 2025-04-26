@@ -44,11 +44,21 @@ You can also pass the following arguments:
   ```
 
 - `--name-list=<filepath>` - Specify a custom JSON file containing names to search:
+
   ```bash
   bun run index.ts --name-list=morenames.json # We provide morenames.json
   ```
 
+- `--disable-cache` - Skip using cached results and force fresh scraping:
+  ```bash
+  bun run index.ts --disable-cache
+  ```
+
 By default, the scraper will look for names in `names.json` if no custom file is specified.
+
+## Caching
+
+By default, scraped data is stored in a `cache.json` file to avoid re-scraping the same names in future runs. This significantly improves performance for repeated searches. Use the `--disable-cache` flag to bypass the cache if you need fresh data.
 
 ## Building for Production
 

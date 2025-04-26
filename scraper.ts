@@ -8,8 +8,9 @@ import {
   cleanPhoneNumber,
   splitIntoBatches,
   refreshStatusDisplay,
+  getEntriesFromCache,
 } from "./utils";
-import { browser, nameStatus } from "./index";
+import { browser, nameStatus, cache } from "./index";
 import { createNewPage } from "./browser";
 
 // Scraping functions
@@ -138,7 +139,10 @@ export async function scrapeByName(name: string): Promise<Entry[]> {
   }
 }
 
-export async function scrapeByNames(names: string[]): Promise<Entry[]> {
+export async function scrapeByNames(
+  names: string[],
+  disableCache: boolean = false
+): Promise<Entry[]> {
   // Initialize status for all names
   names.forEach((name) => {
     nameStatus[name] = { currentPage: 0, totalPages: 10, status: "pending" };
@@ -146,12 +150,44 @@ export async function scrapeByNames(names: string[]): Promise<Entry[]> {
   refreshStatusDisplay();
 
   // Split names into batches for processing
-  const nameBatches = splitIntoBatches(names, CONFIG.BATCH_SIZE);
+  const namesToProcess = names.filter((name) => {
+    if (disableCache) return true;
+
+    const cachedEntries = getEntriesFromCache(name, cache);
+    if (cachedEntries) {
+      console.log(`Using cached data for "${name}"`);
+      if (nameStatus[name]) {
+        nameStatus[name].status = "completed";
+        nameStatus[name].currentPage = nameStatus[name].totalPages;
+      }
+      refreshStatusDisplay();
+      return false;
+    }
+    return true;
+  });
+
+  const nameBatches = splitIntoBatches(namesToProcess, CONFIG.BATCH_SIZE);
   let allEntries: Entry[] = [];
 
+  // Add entries from cache first
+  if (!disableCache) {
+    names.forEach((name) => {
+      const cachedEntries = getEntriesFromCache(name, cache);
+      if (cachedEntries) {
+        allEntries.push(...cachedEntries);
+      }
+    });
+  }
+
   console.log(
-    `Processing ${names.length} names in ${nameBatches.length} batches of up to ${CONFIG.BATCH_SIZE}`
+    `Processing ${namesToProcess.length} names in ${nameBatches.length} batches of up to ${CONFIG.BATCH_SIZE}`
   );
+
+  if (namesToProcess.length < names.length) {
+    console.log(
+      `Skipping ${names.length - namesToProcess.length} names (using cache)`
+    );
+  }
 
   // Process each batch
   for (let batchIndex = 0; batchIndex < nameBatches.length; batchIndex++) {
@@ -164,7 +200,12 @@ export async function scrapeByNames(names: string[]): Promise<Entry[]> {
     const batchResults = await Promise.all(
       batch.map(async (name) => {
         try {
-          return await scrapeByName(name);
+          const entries = await scrapeByName(name);
+          // Update cache with new results
+          if (!disableCache && entries.length > 0) {
+            cache[name] = entries;
+          }
+          return entries;
         } catch (err) {
           console.error(`Failed to scrape "${name}":`, err);
           if (nameStatus[name]) {

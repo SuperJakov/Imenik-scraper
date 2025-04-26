@@ -1,23 +1,35 @@
 import { Browser } from "puppeteer";
 import fs from "fs";
 import { CONFIG } from "./config";
-import { NameStatus } from "./types";
-import { parseArgs } from "./utils";
+import { Cache, NameStatus } from "./types";
+import { parseArgs, loadCache, saveCache } from "./utils";
 import { initializeBrowser, cleanup } from "./browser";
 import { scrapeByNames } from "./scraper";
 
 // State variables
 export const nameStatus: NameStatus = {};
 export let browser: Browser;
+export let cache: Cache = {};
 
 // Main execution function
 async function main() {
   try {
+    // Parse args
+    const args = parseArgs();
+
+    // Load cache unless disabled
+    if (!args.disableCache) {
+      console.log("Loading cache...");
+      cache = loadCache();
+      console.log(`Loaded ${Object.keys(cache).length} entries from cache`);
+    } else {
+      console.log("Cache disabled, will fetch all data fresh");
+    }
+
     // Initialize browser
     browser = await initializeBrowser();
 
-    // Parse args and read input file
-    const args = parseArgs();
+    // Read input file
     const names = JSON.parse(
       fs.readFileSync(args.nameListFile, "utf-8")
     ) as string[];
@@ -31,7 +43,7 @@ async function main() {
     );
     console.log("This may take a while, please be patient.");
 
-    const entries = await scrapeByNames(names);
+    const entries = await scrapeByNames(names, args.disableCache);
     console.timeEnd("Scraping time");
 
     // Save results
@@ -41,6 +53,13 @@ async function main() {
       "imenik-results.json",
       JSON.stringify(entries, null, indentation)
     );
+
+    // Save cache unless disabled
+    if (!args.disableCache) {
+      console.log("Saving cache...");
+      saveCache(cache, args.minify);
+      console.log(`Saved ${Object.keys(cache).length} entries to cache`);
+    }
 
     console.log(
       `Done! ${entries.length} entries saved.${
