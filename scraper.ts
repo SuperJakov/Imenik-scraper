@@ -53,16 +53,17 @@ export async function scrapePage(page: Page): Promise<Entry[]> {
 
   // Process and filter entries
   return rawEntries
-    .map((entry) => ({
-      ...entry,
-      fullName: parseFullName(entry.fullName),
-      city: parseCity(entry.city),
-      street: parseStreet(entry.street),
-      telephoneNumber: entry.telephoneNumber,
-    }))
     .filter((entry) => {
       // Filter out business-related names
-      const businessTerms = ["d.o.o", "ured", "obrt"];
+      const businessTerms = [
+        "d.o.o",
+        "ured",
+        "obrt",
+        "tvrtka",
+        "agencija",
+        "j.d.o.o",
+        "Caffe",
+      ];
       const fullNameLower = entry.fullName.toLowerCase();
       if (businessTerms.some((term) => fullNameLower.includes(term))) {
         return false;
@@ -71,7 +72,14 @@ export async function scrapePage(page: Page): Promise<Entry[]> {
       // Keep only mobile numbers
       const cleanedNumber = cleanPhoneNumber(entry.telephoneNumber);
       return cleanedNumber.startsWith("09");
-    });
+    })
+    .map((entry) => ({
+      ...entry,
+      fullName: parseFullName(entry.fullName),
+      city: parseCity(entry.city),
+      street: parseStreet(entry.street),
+      telephoneNumber: entry.telephoneNumber,
+    }));
 }
 
 export async function scrapeByName(name: string): Promise<Entry[]> {
