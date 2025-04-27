@@ -50,11 +50,34 @@ You can also pass the following arguments:
   ```
 
 - `--disable-cache` - Skip using cached results and force fresh scraping:
+
   ```bash
   bun run index.ts --disable-cache
   ```
 
+- `--mongodb` - Save results to MongoDB in addition to JSON file:
+  ```bash
+  bun run index.ts --mongodb
+  ```
+
 By default, the scraper will look for names in `names.json` if no custom file is specified.
+
+## MongoDB Integration
+
+To use MongoDB for storing scraped data:
+
+1. Create a `.env` file in the project root with your MongoDB connection string:
+
+   ```
+   MONGODB_URI=mongodb://your_connection_string
+   ```
+
+2. Run the scraper with the `--mongodb` flag to enable MongoDB saving:
+   ```bash
+   bun run index.ts --mongodb
+   ```
+
+Results will be saved to the "imenik" database and "entries" collection in MongoDB.
 
 ## Caching
 

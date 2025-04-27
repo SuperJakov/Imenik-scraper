@@ -184,10 +184,14 @@ export async function saveResultsToMongoDB(entries: Entry[]): Promise<void> {
     console.log("Connected to MongoDB");
 
     const database = client.db("imenik");
-    const collection = database.collection("entries");
+    const collection = database.collection("results");
 
     console.log(`Saving ${entries.length} entries to MongoDB...`);
+
     if (entries.length > 0) {
+      // Drop previous results first
+      await collection.deleteMany({});
+      console.log("Previous entries cleared from MongoDB");
       await collection.insertMany(entries);
     }
 
