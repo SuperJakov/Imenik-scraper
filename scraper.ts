@@ -9,6 +9,7 @@ import {
   splitIntoBatches,
   refreshStatusDisplay,
   getEntriesFromCache,
+  saveResults,
 } from "./utils";
 import { browser, nameStatus, cache } from "./index";
 import { createNewPage } from "./browser";
@@ -219,6 +220,10 @@ export async function scrapeByNames(
 
     allEntries = [...allEntries, ...batchResults.flat()];
     console.log(`Completed batch ${batchIndex + 1}/${nameBatches.length}`);
+
+    // Save partial results after each batch
+    const minify = process.argv.includes("--minify");
+    saveResults(allEntries, minify);
   }
 
   return allEntries;

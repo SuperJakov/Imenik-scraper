@@ -143,3 +143,16 @@ export function parseStreet(street: string): string {
 export function cleanPhoneNumber(number: string): string {
   return number.replace(/\s+/g, "");
 }
+
+export function saveResults(entries: Entry[], minify: boolean = false): void {
+  try {
+    const indentation = minify ? undefined : 2;
+    fs.writeFileSync(
+      "imenik-results.json",
+      JSON.stringify(entries, null, indentation)
+    );
+    console.log(`Saved ${entries.length} entries to imenik-results.json`);
+  } catch (error) {
+    console.error("Error writing results file:", error);
+  }
+}

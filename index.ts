@@ -2,7 +2,7 @@ import { Browser } from "puppeteer";
 import fs from "fs";
 import { CONFIG } from "./config";
 import { Cache, NameStatus } from "./types";
-import { parseArgs, loadCache, saveCache } from "./utils";
+import { parseArgs, loadCache, saveCache, saveResults } from "./utils";
 import { initializeBrowser, cleanup } from "./browser";
 import { scrapeByNames } from "./scraper";
 
@@ -46,13 +46,9 @@ async function main() {
     const entries = await scrapeByNames(names, args.disableCache);
     console.timeEnd("Scraping time");
 
-    // Save results
-    console.log("All names processed, writing results to disk");
-    const indentation = args.minify ? undefined : 2;
-    fs.writeFileSync(
-      "imenik-results.json",
-      JSON.stringify(entries, null, indentation)
-    );
+    // Save final results
+    console.log("All names processed, writing final results to disk");
+    saveResults(entries, args.minify);
 
     // Save cache unless disabled
     if (!args.disableCache) {
