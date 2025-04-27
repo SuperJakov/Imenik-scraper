@@ -102,13 +102,13 @@ export function refreshStatusDisplay() {
 
 // String parsing helpers
 export function parseFullName(fullName: string): string {
-  return fullName
+  // Remove punctuation from the entire string first
+  const cleanedName = fullName.replace(/[,.;:!?()[\]{}'"\/\\-]/g, "").trim();
+
+  return cleanedName
     .split(" ")
-    .map((word) =>
-      word.length === 0
-        ? ""
-        : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-    )
+    .filter((word) => word.length > 0) // Remove empty words
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
 }
 

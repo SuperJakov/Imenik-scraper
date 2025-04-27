@@ -61,6 +61,14 @@ export async function scrapePage(page: Page): Promise<Entry[]> {
       telephoneNumber: entry.telephoneNumber,
     }))
     .filter((entry) => {
+      // Filter out business-related names
+      const businessTerms = ["d.o.o", "ured", "obrt"];
+      const fullNameLower = entry.fullName.toLowerCase();
+      if (businessTerms.some((term) => fullNameLower.includes(term))) {
+        return false;
+      }
+
+      // Keep only mobile numbers
       const cleanedNumber = cleanPhoneNumber(entry.telephoneNumber);
       return cleanedNumber.startsWith("09");
     });
