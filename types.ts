@@ -17,6 +17,7 @@ export interface Args {
   minify: boolean;
   nameListFile: string;
   disableCache: boolean;
+  mongodb: boolean; // Changed from mongodbUri to a boolean flag
 }
 
 export interface Cache {

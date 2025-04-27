@@ -2,7 +2,13 @@ import { Browser } from "puppeteer";
 import fs from "fs";
 import { CONFIG } from "./config";
 import { Cache, NameStatus } from "./types";
-import { parseArgs, loadCache, saveCache, saveResults } from "./utils";
+import {
+  parseArgs,
+  loadCache,
+  saveCache,
+  saveResults,
+  saveResultsToMongoDB,
+} from "./utils";
 import { initializeBrowser, cleanup } from "./browser";
 import { scrapeByNames } from "./scraper";
 
@@ -49,6 +55,11 @@ async function main() {
     // Save final results
     console.log("All names processed, writing final results to disk");
     saveResults(entries, args.minify);
+
+    // Save to MongoDB if flag is provided
+    if (args.mongodb) {
+      await saveResultsToMongoDB(entries);
+    }
 
     // Save cache unless disabled
     if (!args.disableCache) {

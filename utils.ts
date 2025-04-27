@@ -2,6 +2,11 @@ import { Args, Cache, Entry } from "./types";
 import { CONFIG } from "./config";
 import { nameStatus } from "./index";
 import fs from "fs";
+import { MongoClient } from "mongodb";
+import dotenv from "dotenv";
+
+// Load environment variables from .env file
+dotenv.config();
 
 // Utility functions
 export function parseArgs(): Args {
@@ -14,6 +19,7 @@ export function parseArgs(): Args {
     minify: process.argv.includes("--minify"),
     nameListFile,
     disableCache: process.argv.includes("--disable-cache"),
+    mongodb: process.argv.includes("--mongodb"),
   };
 }
 
@@ -154,5 +160,40 @@ export function saveResults(entries: Entry[], minify: boolean = false): void {
     console.log(`Saved ${entries.length} entries to imenik-results.json`);
   } catch (error) {
     console.error("Error writing results file:", error);
+  }
+}
+
+export async function saveResultsToMongoDB(entries: Entry[]): Promise<void> {
+  const mongodbUri = process.env.MONGODB_URI;
+
+  if (!mongodbUri) {
+    console.error(
+      "Error: MONGODB_URI environment variable is not set in .env file"
+    );
+    console.error(
+      "Please create a .env file with MONGODB_URI=your_connection_string"
+    );
+    return;
+  }
+
+  try {
+    console.log("Connecting to MongoDB...");
+    const client = new MongoClient(mongodbUri);
+
+    await client.connect();
+    console.log("Connected to MongoDB");
+
+    const database = client.db("imenik");
+    const collection = database.collection("entries");
+
+    console.log(`Saving ${entries.length} entries to MongoDB...`);
+    if (entries.length > 0) {
+      await collection.insertMany(entries);
+    }
+
+    console.log(`Successfully saved ${entries.length} entries to MongoDB`);
+    await client.close();
+  } catch (error) {
+    console.error("Error saving results to MongoDB:", error);
   }
 }
